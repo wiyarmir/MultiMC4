@@ -23,7 +23,7 @@
 
 #include <wx/cmdline.h>
 
-#include "langutils.h"
+#include "utils/langutils.h"
 
 extern const wxString licenseText;
 
@@ -58,6 +58,8 @@ public:
 	wxFileName providedDir;
 
 	LocaleHelper localeHelper;
+
+	wxString updateLaterURL;
 protected:
 	wxLocale* m_locale;
 

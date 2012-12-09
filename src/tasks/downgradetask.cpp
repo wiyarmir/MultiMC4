@@ -24,9 +24,9 @@
 #include "md5/md5.h"
 #include "bspatch.h"
 
-#include "curlutils.h"
-#include "httputils.h"
-#include "apputils.h"
+#include "utils/curlutils.h"
+#include "utils/httputils.h"
+#include "utils/apputils.h"
 
 const wxString mcnwebURL = "http://sonicrules.org/mcnweb.py";
 
@@ -55,7 +55,14 @@ wxThread::ExitCode DowngradeTask::TaskStart()
 
 	// if mcbackup.jar exists, we updated that anyway. The version update won't pick that up.
 	if(!wxFileExists(Path::Combine(m_inst->GetBinDir(), "mcbackup.jar")))
+	{
 		m_inst->UpdateVersion();
+	}
+	else
+	{
+		// if there already is a backup (which we now replaced), reinstall all mods
+		m_inst->SetNeedsRebuild();
+	}
 	SetStep(STEP_DONE);
 	return (ExitCode)1;
 }
@@ -64,13 +71,13 @@ bool DowngradeTask::DownloadPatches()
 {
 	SetStep(STEP_DOWNLOAD_PATCHES);
 
-	const int patchURLCount = 5;
+	const int patchURLCount = 2;
 	const wxString patchURLs[patchURLCount] =
 	{ 
 		"minecraft.ptch", 
-		"lwjgl.ptch",
+		/*"lwjgl.ptch",
 		"lwjgl_util.ptch",
-		"jinput.ptch",
+		"jinput.ptch",*/
 		"checksum.json",
 	};
 
@@ -145,13 +152,13 @@ bool DowngradeTask::VerifyOriginalFiles()
 {
 	SetStep(STEP_VERIFY_FILES);
 
-	const int patchFileCount = 4;
+	const int patchFileCount = 1;
 	const wxString patchFiles[] =
 	{ 
 		"minecraft", 
-		"lwjgl",
+		/*"lwjgl",
 		"lwjgl_util",
-		"jinput",
+		"jinput",*/
 	};
 
 	using namespace boost::property_tree;
@@ -206,13 +213,13 @@ bool DowngradeTask::VerifyOriginalFiles()
 
 bool DowngradeTask::ApplyPatches()
 {
-	const int patchFileCount = 4;
+	const int patchFileCount = 1;
 	const wxString patchFiles[] =
 	{ 
 		"minecraft", 
-		"lwjgl",
+		/*"lwjgl",
 		"lwjgl_util",
-		"jinput",
+		"jinput",*/
 	};
 
 	SetStep(STEP_APPLY_PATCHES);
@@ -262,13 +269,13 @@ bool DowngradeTask::VerifyPatchedFiles()
 
 	SetStep(STEP_VERIFY_FILES2);
 
-	const int patchFileCount = 4;
+	const int patchFileCount = 1;
 	const wxString patchFiles[] =
 	{ 
 		"minecraft", 
-		"lwjgl",
+		/*"lwjgl",
 		"lwjgl_util",
-		"jinput",
+		"jinput",*/
 	};
 
 	using namespace boost::property_tree;

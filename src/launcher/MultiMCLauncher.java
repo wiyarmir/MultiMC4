@@ -31,6 +31,11 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import org.simplericity.macify.eawt.Application;
+import org.simplericity.macify.eawt.DefaultApplication;
+
 public class MultiMCLauncher
 {
 	/**
@@ -45,10 +50,28 @@ public class MultiMCLauncher
 			System.out.println("Not enough arguments.");
 			System.exit(-1);
 		}
+		
+		// Set the OSX application icon first, if we are on OSX.
+		Application application = new DefaultApplication();
+		if(application.isMac())
+		{
+			try
+			{
+				BufferedImage image = ImageIO.read(new File("icon.png"));
+				application.setApplicationIconImage(image);
+			}
+			catch (IOException e)
+			{
+				e.printStackTrace();
+			}
+		}
+		
 		String userName = args[0];
 		String sessionId = args[1];
 		String windowtitle = args[2];
 		String cwd = System.getProperty("user.dir");
+		String encoding = System.getProperty("file.encoding");
+		System.out.println("File encoding: " + encoding);
 		
 		Dimension winSize = new Dimension(854, 480);
 		boolean maximize = false;
@@ -116,8 +139,6 @@ public class MultiMCLauncher
 			
 			System.setProperty("org.lwjgl.librarypath", nativesDir);
 			System.setProperty("net.java.games.input.librarypath", nativesDir);
-
-			System.setProperty("user.home", new File(cwd).getParent());
 
 			URLClassLoader cl = 
 					new URLClassLoader(urls, MultiMCLauncher.class.getClassLoader());
@@ -230,9 +251,12 @@ public class MultiMCLauncher
 			mcArgs[0] = userName;
 			mcArgs[1] = sessionId;
 
+			// this is bogus, the method is never used for anything after we set the field
+			/*
 			String mcDir = 	mc.getMethod("a", String.class).invoke(null, (Object) "minecraft").toString();
 
 			System.out.println("MCDIR: " + mcDir);
+			*/
 			
 			if (compatMode)
 			{

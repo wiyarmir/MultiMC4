@@ -15,13 +15,14 @@
 //
 
 #include "settingsdialog.h"
+#include "mainwindow.h"
 
 #include <wx/gbsizer.h>
 #include <wx/dir.h>
 #include <wx/valnum.h>
 
-#include <apputils.h>
-#include <fsutils.h>
+#include <utils/apputils.h>
+#include <utils/fsutils.h>
 
 #include "multimc.h"
 #include "instance.h"
@@ -44,6 +45,7 @@ const wxString sortModeLastLaunch = _("By Last Launched");
 SettingsDialog::SettingsDialog( wxWindow* parent, wxWindowID id, SettingsBase* s /* = settings */)
 	: wxDialog(parent, id, _("Settings"), wxDefaultPosition, wxSize(500, 450))
 {
+	parent_w = (MainWindow *) parent;
 	m_shouldRestartMMC = false;
 	currentSettings = s;
 	wxBoxSizer *mainBox = new wxBoxSizer(wxVERTICAL);
@@ -129,8 +131,6 @@ SettingsDialog::SettingsDialog( wxWindow* parent, wxWindowID id, SettingsBase* s
 				box->Add(useDevBuildsCheck, itemFlags);
 				autoUpdateCheck = new wxCheckBox(box->GetStaticBox(), -1, _("Check for updates when MultiMC starts?"));
 				box->Add(autoUpdateCheck, itemFlags);
-				forceUpdateToggle = new wxToggleButton(box->GetStaticBox(), -1, _("Force-update MultiMC"));
-				box->Add(forceUpdateToggle, itemFlags);
 				multimcSizer->Add(box, staticBoxOuterFlags);
 			}
 
@@ -521,6 +521,14 @@ bool SettingsDialog::FolderMove ( wxFileName oldDir, wxFileName newDir, wxString
 			} while (srcDir.GetNext(&oldName));
 		}
 	}
+	else
+	{
+		if(!newDir.Mkdir(0777,wxPATH_MKDIR_FULL))
+		{
+			wxLogError(_("Failed to create the new folder: %s"), newDir.GetFullPath().c_str());
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -560,6 +568,14 @@ bool SettingsDialog::ApplySettings()
 				_("Central mods directory changed.")))
 			{
 				return false;
+			}
+			else
+			{
+				// NUKE ALL MODS, FOLDER CHANGED
+				auto mlist = parent_w->GetCentralModList();
+				mlist->clear();
+				mlist->SetDir(newModDir.GetFullPath());
+				mlist->UpdateModList();
 			}
 		}
 		currentSettings->SetModsDir(newModDir);
@@ -639,7 +655,7 @@ Are you sure you want to use dev builds?"),
 			bool languageSet = false;
 			wxString langName = langSelectorBox->GetStringSelection();
 			const LanguageArray* langs = wxGetApp().localeHelper.GetLanguages();
-			for (int i = 0; i < langs->size(); i++)
+			for (unsigned i = 0; i < langs->size(); i++)
 			{
 				if (langs->operator[](i).m_name == langName &&
 					langs->operator[](i).m_canonicalName != currentSettings->GetLanguage())
@@ -796,7 +812,7 @@ void SettingsDialog::LoadSettings()
 
 		int selectedIndex = -1;
 		const LanguageArray* langs = wxGetApp().localeHelper.GetLanguages();
-		for (int i = 0; i < langs->size(); i++)
+		for (unsigned i = 0; i < langs->size(); i++)
 		{
 			wxString langCName = langs->operator[](i).m_canonicalName;
 			langSelectorBox->Append(langs->operator[](i).m_name);
@@ -975,11 +991,6 @@ void SettingsDialog::UpdateCheckboxStuff()
 		proxyUserTextbox->Enable(!noProxyRBtn->GetValue());
 		proxyPassTextbox->Enable(!noProxyRBtn->GetValue());
 	}
-}
-
-bool SettingsDialog::GetForceUpdateMultiMC() const
-{
-	return !instanceMode && forceUpdateToggle->GetValue();
 }
 
 bool SettingsDialog::ShouldRestartNow() const

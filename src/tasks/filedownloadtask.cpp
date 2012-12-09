@@ -15,8 +15,8 @@
 //
 
 #include "filedownloadtask.h"
-#include "curlutils.h"
-#include <apputils.h>
+#include "utils/curlutils.h"
+#include "utils/apputils.h"
 #include <wx/wfstream.h>
 
 FileDownloadTask::FileDownloadTask(const wxString &src, const wxFileName &dest, const wxString &message)
@@ -82,7 +82,8 @@ wxThread::ExitCode FileDownloadTask::TaskStart()
 		}
 
 		wxString sDownloadSize = wxString::Format(wxT("%.0f"), (float)(downloadSize / 1000));
-		SetStatus(wxString::Format(_("Downloading...\n(%skB/%skB)"), sDownloadedSize.c_str(), sDownloadSize.c_str()));
+		SetStatus(wxString::Format(_("%s (%skB/%skB)"), 
+			m_message.c_str(), sDownloadedSize.c_str(), sDownloadSize.c_str()));
 		return outStream.LastWrite();
 	};
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &curlWrite);
@@ -127,4 +128,9 @@ double FileDownloadTask::GetDownloadSize()
 		return -responseCode;
 	else
 		return contentLen;
+}
+
+bool FileDownloadTask::WasSuccessful() const
+{
+	return successful;
 }

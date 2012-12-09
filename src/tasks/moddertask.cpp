@@ -15,10 +15,10 @@
 //
 
 #include "moddertask.h"
-#include <fsutils.h>
+#include <utils/fsutils.h>
 #include <wx/wfstream.h>
 #include <wx/fs_mem.h>
-#include <apputils.h>
+#include <utils/apputils.h>
 
 #include <set>
 #include <memory>
@@ -38,6 +38,13 @@ wxThread::ExitCode ModderTask::TaskStart()
 	wxFileName mcBin = m_inst->GetBinDir();
 	wxFileName mcJar = m_inst->GetMCJar();
 	wxFileName mcBackup = m_inst->GetMCBackup();
+	
+	// Nothing to do if there are no jar mods to install, no backup and just the mc jar
+	if(mcJar.FileExists() && !mcBackup.FileExists() && modList->empty())
+	{
+		m_inst->SetNeedsRebuild(false);
+		return (ExitCode)1;
+	}
 	
 	SetStatus(_("Installing mods - backing up minecraft.jar..."));
 	if (!mcBackup.FileExists() && !wxCopyFile(mcJar.GetFullPath(), mcBackup.GetFullPath()))

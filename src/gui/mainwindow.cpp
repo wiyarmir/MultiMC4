@@ -35,7 +35,7 @@
 #include "importpackwizard.h"
 #include "downgradedialog.h"
 #include "downgradetask.h"
-#include "fsutils.h"
+#include "utils/fsutils.h"
 #include "aboutdlg.h"
 #include "updatepromptdlg.h"
 #include "taskprogressdialog.h"
@@ -44,6 +44,7 @@
 #include "savemgrwindow.h"
 #include "stdinstance.h"
 #include <mcversionlist.h>
+#include <mcprocess.h>
 #include "lwjglinstalltask.h"
 #include "ftbselectdialog.h"
 
@@ -92,6 +93,7 @@ MainWindow::MainWindow(void)
 		centralModList(settings->GetModsDir().GetFullPath())
 {
 	// initialize variables to sane values
+	m_guiState = STATE_IDLE;
 	renamingInst = false;
 	instActionsEnabled = true;
 	instMenu = nullptr;
@@ -116,7 +118,7 @@ MainWindow::MainWindow(void)
 	instNameLabel = nullptr;
 	instNameEditor = nullptr;
 	//SetMinSize(minSize);
-	
+
 	SetIcons(wxGetApp().GetAppIcons());
 	
 	wxToolBar *mainToolBar = CreateToolBar(/*wxTB_HORIZONTAL| wxTB_NO_TOOLTIPS*/);
@@ -231,6 +233,20 @@ MainWindow::MainWindow(void)
 	SetAcceleratorTable(accel);
 #endif
 #endif
+
+	// Is it November 30th?
+	const wxDateTime originalReleaseDate(30, wxDateTime::Month::Nov, 2011, 17, 54);
+	if (wxDateTime::Now().GetDay() == originalReleaseDate.GetDay() &&
+		wxDateTime::Now().GetMonth() == originalReleaseDate.GetMonth())
+	{
+		// Calculate how many years old MultiMC is.
+		int yearsOld = wxDateTime::Now().GetYear() - originalReleaseDate.GetYear();
+
+		wxString yearStr = (yearsOld == 1 ? _("year") : _("years"));
+		wxString titleMsg = wxString::Format(_("Happy Birthday, MultiMC! %i %s old!"),
+			yearsOld, yearStr.c_str());
+		SetTitle(titleMsg);
+	}
 	
 	CenterOnScreen();
 }
@@ -297,7 +313,10 @@ void MainWindow::InitInstMenu()
 	instMenu->Append(ID_ChangeIcon, _("&Change Icon"), _("Change this instance's icon."));
 	instMenu->Append(ID_EditNotes, _("&Notes"), _("View / edit this instance's notes."));
 	instMenu->Append(ID_Configure, _("&Settings"), _("Change instance settings."));
+#if WINDOWS
+	// Only works on Windows.
 	instMenu->Append(ID_MakeDesktopLink, _("Make Desktop Shortcut"), _("Makes a shortcut on the desktop to launch this instance."));
+#endif
 	instMenu->AppendSeparator();
 	instMenu->Append(ID_ManageSaves, _("&Manage Saves"), _("Backup / restore your saves."));
 	instMenu->Append(ID_EditMods, _("&Edit Mods"), _("Install or remove mods."));
@@ -628,6 +647,7 @@ void MainWindow::OnImportMCFolder(wxCommandEvent& event)
 	auto task = new FileCopyTask(existingMCDir, inst->GetMCDir());
 	StartTask(task);
 	delete task;
+	// FIXME: respond to errors in task.
 	
 	AddInstance(inst);
 }
@@ -685,6 +705,7 @@ void MainWindow::OnImportFTBClicked(wxCommandEvent& event)
 					selDialog.GetSelectedFolder(), instDirName);
 				StartTask(copyTask);
 				delete copyTask;
+				// FIXME: respond to errors in task.
 
 				// Make some corrections
 				if (!wxFileExists(inst->GetVersionFile().GetFullPath()) &&
@@ -696,6 +717,19 @@ void MainWindow::OnImportFTBClicked(wxCommandEvent& event)
 
 				// Set needs rebuild.
 				inst->SetNeedsRebuild();
+
+				// Set a random FTB icon.
+				int icon = rand() % 2;
+				switch (icon)
+				{
+				case 0:
+					inst->SetIconKey("ftb-logo");
+					break;
+
+				case 1:
+					inst->SetIconKey("ftb-glow");
+					break;
+				}
 
 				// Add the instance.
 				AddInstance(inst);
@@ -740,22 +774,6 @@ void MainWindow::OnSettingsClicked(wxCommandEvent& event)
 		}
 		instListCtrl->ReloadAll();
 		
-		if (settingsDlg.GetForceUpdateMultiMC())
-		{
-			wxString ciURL(_T(JENKINS_JOB_URL));
-
-#if WINDOWS
-			wxString dlFileName = "MultiMC.exe";
-#else
-			wxString dlFileName = "MultiMC";
-#endif
-
-			wxString dlURL = wxString::Format(
-				"%s/lastStableBuild/artifact/%s",
-				ciURL.c_str(), dlFileName.c_str());
-			DownloadInstallUpdates(dlURL);
-		}
-
 		if (settingsDlg.ShouldRestartNow())
 		{
 			wxGetApp().exitAction = MultiMC::EXIT_RESTART;
@@ -778,23 +796,33 @@ void MainWindow::OnCheckUpdateClicked(wxCommandEvent& event)
 
 void MainWindow::OnCheckUpdateComplete(CheckUpdateEvent &event)
 {
-	if (event.m_latestBuildNumber != AppVersion.GetBuild())
-	{
-		wxString updateMsg = wxString::Format(_("Build #%i is available. Would you like to download and install it?"), 
-			event.m_latestBuildNumber);
+	// Clone the event so that we can keep it. We need to do this because 
+	// if an instance is running, by the time processLater() is called, the 
+	// original event will have been deleted.
+	CheckUpdateEvent* newEvent = (CheckUpdateEvent*)event.Clone();
 
-		UpdatePromptDialog updatePrompt (this, updateMsg);
-		updatePrompt.CenterOnParent();
-		int response = updatePrompt.ShowModal();
-		if (response == ID_UpdateNow)
+	DeferredEventFunc processLater = [&, newEvent] ()
+	{
+		if (newEvent->m_latestBuildNumber != AppVersion.GetBuild())
 		{
-			DownloadInstallUpdates(event.m_downloadURL);
+			wxString updateMsg = wxString::Format(_("Build #%i is available. Would you like to download and install it?"), 
+				newEvent->m_latestBuildNumber);
+
+			UpdatePromptDialog updatePrompt (this, updateMsg);
+			updatePrompt.CenterOnParent();
+			int response = updatePrompt.ShowModal();
+			if (response == ID_UpdateNow)
+			{
+				DownloadInstallUpdates(newEvent->m_downloadURL);
+			}
+			else if (response == ID_UpdateLater)
+			{
+				DownloadInstallUpdates(newEvent->m_downloadURL, false);
+			}
+			delete newEvent;
 		}
-		else if (response == ID_UpdateLater)
-		{
-			DownloadInstallUpdates(event.m_downloadURL, false);
-		}
-	}
+	};
+	CallWhenIdle(processLater);
 }
 
 void MainWindow::DownloadInstallUpdates(const wxString &downloadURL, bool installNow)
@@ -805,22 +833,28 @@ void MainWindow::DownloadInstallUpdates(const wxString &downloadURL, bool instal
 	wxString updaterFileName = "MultiMCUpdate";
 #endif
 
-	auto dlTask = new FileDownloadTask(downloadURL, wxFileName(updaterFileName), _("Downloading updates..."));
-
 	if (installNow)
 	{
-		// Download and install in the foreground.
+		// Download and install.
+		auto dlTask = new FileDownloadTask(downloadURL, wxFileName(updaterFileName), _("Downloading updates..."));
 		StartTask(dlTask);
+		bool OK = dlTask->WasSuccessful();
 		delete dlTask;
-		wxGetApp().exitAction = MultiMC::EXIT_UPDATE_RESTART;
-		Close(false);
+		if(OK)
+		{
+			wxGetApp().exitAction = MultiMC::EXIT_UPDATE_RESTART;
+			Close(false);
+		}
+		else
+		{
+			wxMessageBox(_("Update download failed.\nThis may be due to missing internet connection or server problems.\nTry again later."),
+			             _("Error"), wxOK | wxCENTER | wxICON_ERROR, this);
+		}
 	}
 	else
 	{
-		// Download in the background and install on exit.
-		// FIXME: If MultiMC closes before the download finishes, the update will not install.
-		dlTask->Start(this, false);
-		wxGetApp().exitAction = MultiMC::EXIT_UPDATE;
+		// Download and install on exit.
+		wxGetApp().updateLaterURL = downloadURL;
 	}
 }
 
@@ -979,6 +1013,7 @@ void MainWindow::OnLoginComplete( const LoginResult& result )
 		sessionID.Trim();
 		if (!result.playOffline && !sessionID.IsEmpty() && sessionID != "Offline")
 		{
+			// FIXME: respond to errors in task.
 			auto task = new GameUpdateTask(inst, result.latestVersion, result.forceUpdate);
 			StartTask(task);
 			delete task;
@@ -988,22 +1023,24 @@ void MainWindow::OnLoginComplete( const LoginResult& result )
 		
 		if (inst->ShouldRebuild())
 		{
+			// FIXME: respond to errors in task.
 			auto task = new ModderTask (inst);
 			StartTask(task);
 			delete task;
 		}
 		
-		if(inst->Launch(result.username, result.sessionID, true) != nullptr)
+		InstConsoleWindow *cwin = new InstConsoleWindow(inst, this, !launchInstance.IsEmpty());
+		cwin->SetUserInfo(result.username, result.sessionID);
+		cwin->SetName(wxT("InstConsoleWindow"));
+		if (!wxPersistenceManager::Get().RegisterAndRestore(cwin))
+			cwin->CenterOnScreen();
+		
+		if (MinecraftProcess::Launch(inst, cwin, result.username, result.sessionID) != nullptr)
 		{
 			Show(false);
-			InstConsoleWindow *cwin = new InstConsoleWindow(inst, this, 
-				!launchInstance.IsEmpty());
-			cwin->SetUserInfo(result.username, result.sessionID);
-			cwin->SetName(wxT("InstConsoleWindow"));
-			if (!wxPersistenceManager::Get().RegisterAndRestore(cwin))
-				cwin->CenterOnScreen();
-			cwin->Start();
+			cwin->Show(settings->GetShowConsole());
 			instListCtrl->ReloadAll();
+			SetGUIState(STATE_INST_RUNNING);
 		}
 		else
 		{
@@ -1015,6 +1052,13 @@ void MainWindow::OnLoginComplete( const LoginResult& result )
 		// Login failed
 		ShowLoginDlg(result.errorMessage);
 	}
+}
+
+void MainWindow::ReturnToMainWindow()
+{
+	Show();
+	Raise();
+	SetGUIState(STATE_IDLE);
 }
 
 void MainWindow::RenameEvent()
@@ -1105,11 +1149,11 @@ void MainWindow::OnCopyInstClicked(wxCommandEvent &event)
 	instDirName = Path::Combine(settings->GetInstDir(), Utils::RemoveInvalidPathChars(instDirName, '-', false));
 
 	wxMkdir(instDirName);
+	// FIXME: respond to errors in task.
 	auto task = new FileCopyTask (currentInstance->GetRootDir().GetFullPath(), wxFileName::DirName(instDirName));
 	StartTask(task);
 	delete task;
 
-	//FIXME: I wouldn't be so sure about *THIS*
 	Instance *newInst = new StdInstance(instDirName);
 	newInst->SetName(instName);
 	AddInstance(newInst);
@@ -1123,13 +1167,7 @@ void MainWindow::OnMakeDesktopLinkClicked(wxCommandEvent& event)
 
 #if WINDOWS
 	// Find the Desktop folder.
-	wxString desktopDir;
-	if (!wxGetEnv("USERPROFILE", &desktopDir))
-	{
-		wxLogError(_("Can't create desktop shortcut. Failed to find home folder."));
-		return;
-	}
-	desktopDir = Path::Combine(desktopDir, "Desktop");
+	wxString desktopDir = Path::GetDesktopDir();
 
 	wxString shortcutName;
 AskAgain:
@@ -1351,7 +1389,7 @@ indev and infdev. Are you sure you would like to downgrade to this version?"),
 					return;
 				}
 			}
-
+			// FIXME: respond to errors in task.
 			auto task = new DowngradeTask (currentInstance, downDlg.GetSelection());
 			StartTask(task);
 			delete task;
@@ -1370,38 +1408,51 @@ void MainWindow::OnSnapshotClicked(wxCommandEvent& event)
 	if(currentInstance == nullptr)
 		return;
 
-	if (currentInstance->GetVersionFile().FileExists())
-	{
-		SnapshotDialog snapDlg(this);
-		snapDlg.CenterOnParent();
-		MCVersion ver;
-		if (snapDlg.ShowModal() == wxID_OK && snapDlg.GetSelectedVersion(ver))
-		{
-			wxString snapURL = ver.dlURL + "minecraft.jar";
-
-			wxString snapshotJar = Path::Combine(currentInstance->GetBinDir(), wxT("snapshot.jar"));
-			FileDownloadTask task(snapURL, snapshotJar);
-			if (StartTask(&task))
-			{
-				if (wxFileExists(currentInstance->GetMCBackup().GetFullPath()) &&
-					!wxRemoveFile(currentInstance->GetMCBackup().GetFullPath()))
-				{
-					wxLogError(_("MultiMC was unable to replace the old .jar with the new snapshot."));
-					return;
-				}
-
-				if (wxCopyFile(snapshotJar, currentInstance->GetMCJar().GetFullPath()))
-				{
-					currentInstance->UpdateVersion();
-					UpdateInstPanel();
-				}
-			}
-		}
-	}
-	else
+	if (!currentInstance->GetVersionFile().FileExists())
 	{
 		wxLogError(_("You must run this instance at least once to download minecraft before you can downgrade it!"));
+		return;
 	}
+	SnapshotDialog snapDlg(this);
+	snapDlg.CenterOnParent();
+	MCVersion ver;
+	if(snapDlg.ShowModal() != wxID_OK || !snapDlg.GetSelectedVersion(ver))
+		return;
+	
+	wxString snapURL = ver.dlURL + "minecraft.jar";
+
+	wxString snapshotJar = Path::Combine(currentInstance->GetBinDir(), wxT("snapshot.jar"));
+	FileDownloadTask task(snapURL, snapshotJar);
+	if (!StartTask(&task))
+	{
+		wxLogError(_("MultiMC failed to download the new minecraft.jar"));
+		return;
+	}
+	
+	// if there is a backup, this signifies that we need to reinstall current mods into the new jar
+	// we nuke the backup regardless and replace the minecraft.jar
+	wxString failMSG = _("MultiMC was unable to replace the old .jar with the new snapshot.");
+	wxString mcbackup = currentInstance->GetMCBackup().GetFullPath();
+	if(wxFileExists(mcbackup))
+	{
+		if(!wxRemoveFile(currentInstance->GetMCBackup().GetFullPath()))
+		{
+			wxLogError(failMSG);
+			return;
+		}
+		else
+		{
+			currentInstance->SetNeedsRebuild();
+		}
+	}
+	// yep
+	if (wxCopyFile(snapshotJar, currentInstance->GetMCJar().GetFullPath()))
+	{
+		currentInstance->UpdateVersion();
+		UpdateInstPanel();
+	}
+	else
+		wxLogError(failMSG); // badness. and snake jars. let the user know.
 }
 
 void MainWindow::OnChangeLWJGLClicked(wxCommandEvent& event)
@@ -1430,6 +1481,7 @@ void MainWindow::OnRebuildJarClicked(wxCommandEvent& event)
 	auto currentInstance = instItems.GetSelectedInstance();
 	if(currentInstance == nullptr)
 		return;
+	// FIXME: respond to errors in task.
 	auto task = new ModderTask(currentInstance);
 	StartTask(task);
 	delete task;
@@ -1543,13 +1595,13 @@ int MainWindow::StartTask ( Task* task )
 
 void MainWindow::OnWindowClosed(wxCloseEvent& event)
 {
-	wxPersistenceManager::Get().SaveAndUnregister(this);
 	if(instNotesEditor)
 	{
 		// Save instance notes on exit.
 		SaveNotesBox(true);
 	}
-	wxTheApp->Exit();
+
+	Destroy();
 }
 
 void MainWindow::BuildConfPack(Instance *inst, const wxString &packName, 
@@ -1581,6 +1633,48 @@ void MainWindow::OnNotesLostFocus(wxFocusEvent& event)
 	event.Skip();
 }
 */
+
+MainWindow::GUIState MainWindow::GetGUIState() const
+{
+	return m_guiState;
+}
+
+void MainWindow::SetGUIState(MainWindow::GUIState state)
+{
+	m_guiState = state;
+
+	if (m_guiState == STATE_IDLE)
+	{
+		// If idle, call idle functions.
+		CallIdleFunctions();
+	}
+}
+
+void MainWindow::CallWhenIdle(DeferredEventFunc func)
+{
+	// If idle right now, call the function.
+	// Otherwise, add it to the queue.
+	if (GetGUIState() == STATE_IDLE)
+		func();
+	else
+		m_idleQueue.push(func);
+}
+
+void MainWindow::CallIdleFunctions()
+{
+	while (!m_idleQueue.empty() && GetGUIState() == STATE_IDLE)
+	{
+		ProcessNextIdleFunction();
+	}
+}
+
+void MainWindow::ProcessNextIdleFunction()
+{
+	// Pop before calling the function to avoid possible infinite recursion.
+	DeferredEventFunc func = m_idleQueue.front();
+	m_idleQueue.pop();
+	func();
+}
 
 BEGIN_EVENT_TABLE(MainWindow, wxFrame)
 	EVT_TOOL(ID_AddInst, MainWindow::OnAddInstClicked)
